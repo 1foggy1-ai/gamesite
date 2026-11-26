@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Админ-панель — Настолки</title>
+  <link rel="stylesheet" href="style.css">
+  <link href="https://googleapis.com" rel="stylesheet">
+</head>
+<body>
+  <div id="toastContainer" class="toast-container"></div>
+
+  <header>
+    <a href="index.html" class="logo" style="text-decoration: none;">← На главную</a>
+    <div class="header-actions">
+      <button id="resetDemoBtn" class="btn-outline" style="font-size: 0.85rem;">🔄 Сбросить демо-базу</button>
+    </div>
+  </header>
+
+  <main class="container">
+    <div class="seo-header">
+      <div class="breadcrumbs">Главная / Админ-панель</div>
+      <h1>⚙ Панель администратора</h1>
+      <p class="seo-desc">Модерация партий, подтверждение заявок игроков и управление каталогом.</p>
+    </div>
+
+    <!-- 1. Модерация партий -->
+    <section class="panel" style="margin-bottom: 32px;">
+      <div class="panel-header">
+        <h2>🛡 Модерация партий (<span id="sessionsCount">0</span>)</h2>
+      </div>
+      <div id="adminSessionsList" style="display: flex; flex-direction: column; gap: 12px;"></div>
+    </section>
+
+    <!-- 2. Заявки игроков на вступление -->
+    <section class="panel" style="margin-bottom: 32px;">
+      <div class="panel-header">
+        <h2>📩 Заявки на вступление в партии (<span id="requestsCount">0</span>)</h2>
+      </div>
+      <div id="adminRequestsList" style="display: flex; flex-direction: column; gap: 12px;"></div>
+    </section>
+
+    <!-- 3. Управление играми -->
+    <section class="panel">
+      <div class="panel-header">
+        <h2>🎲 Каталог игр (<span id="gamesCount">0</span>)</h2>
+        <button id="openAddModalBtn" class="btn-primary">+ Добавить игру</button>
+      </div>
+      <div id="adminGamesList" style="display: flex; flex-direction: column; gap: 12px;"></div>
+    </section>
+  </main>
+
+  <!-- Модальное окно добавления игры -->
+  <div id="addModal" class="modal-backdrop">
+    <div class="modal">
+      <h2>Добавить новую игру</h2>
+      <form id="addGameForm">
+        <div class="form-row"><label>Название</label><input type="text" id="gTitle" required></div>
+        <div class="form-grid-2">
+          <div class="form-row"><label>Мин. игроков</label><input type="number" id="gMinP" value="2" min="1" required></div>
+          <div class="form-row"><label>Макс. игроков</label><input type="number" id="gMaxP" value="6" min="1" required></div>
+        </div>
+        <div class="form-grid-2">
+          <div class="form-row"><label>Возраст (+)</label><input type="number" id="gAge" value="12" min="0" required></div>
+          <div class="form-row"><label>Время (мин)</label><input type="number" id="gTime" value="30" min="5" required></div>
+        </div>
+        <div class="form-row"><label>Теги (через запятую)</label><input type="text" id="gTags" placeholder="стратегия, семейная"></div>
+        <div class="form-row"><label>Ссылка на картинку (необязательно)</label><input type="text" id="gImg" placeholder="img/game.jpg"></div>
+        <div class="form-row"><label>Описание</label><textarea id="gDesc" rows="3"></textarea></div>
+        <div class="modal-actions">
+          <button type="button" id="closeAddModalBtn" class="btn-outline">Отмена</button>
+          <button type="submit" class="btn-primary">Сохранить</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <script>
+    const user = JSON.parse(localStorage.getItem('bg_user') || 'null');
+    if (!user || user.role !== 'admin') {
+      alert('Доступ запрещён! Войдите на главной странице как администратор (email со словом admin).');
+      location.href = 'index.html';
+    }
+
+    let games = [];
+    let sessions = [];
+    let requests = [];
+
+    function showToast(message, type = 'success') {
+      const container = document.getElementById('toastContainer');
+      const toast = document.createElement('div');
+      toast.className = `toast ${type}`;
+      toast.innerHTML = `<span class="toast-icon">${type === 'success' ? '✅' : '⚠️'}</span><span>${message}</span>`;
+      container.appendChild(toast);
+      setTimeout(() => { toast.classList.add('hiding'); setTimeout(() => toast.remove(), 300); }, 3000);
+    }
+
+    async function initAdmin() {
+      const savedGames = localStorage.getItem('bg_games');
+      if (savedGames) {
+        games = JSON.parse(savedGames);
+      } else {
+        const res = await fetch('games.json');
+        games = await res.json();
+        localStorage.setItem('bg_games', JSON.stringify(games));
+      }
+      sessions = JSON.parse(localStorage.getItem('bg_sessions') || '[]');
+      requests = JSON.parse(localStorage.getItem('bg_requests') || '[]');
+      renderAdmin();
+    }
+
+    function renderAdmin() {
+      document.getElementById('gamesCount').textContent = games.length;
+      document.getElementById('sessionsCount').textContent = sessions.length;
+      const pendingReqs = requests.filter(r => r.status === 'pending');
+      document.getElementById('requestsCount').textContent = pendingReqs.length;
+
+      const sessionsBox = document.getElementById('adminSessionsList');
+      sessionsBox.innerHTML = sessions.length ? sessions.map(s => {
+        const statusBadge = s.moderation_status === 'approved'
+          ? '<span style="color:#10b981; font-weight:700;">✅ Одобрена</span>'
+          : s.moderation_status === 'rejected'
+          ? '<span style="color:#ef4444; font-weight:700;">❌ Отклонена</span>'
+          : '<span style="color:#f59e0b; font-weight:700;">⏳ На модерации</span>';
+
+        return `
+        <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px; background:var(--bg); padding:14px 18px; border-radius:12px; border:1px solid var(--border);">
+          <div>
+            <strong>🎲 ${s.game_title}</strong> • ${statusBadge}
+            <div style="font-size:0.85rem; color:var(--text-muted);">👤 Хост: ${s.host_name} • 📅 ${s.session_date} • 👥 ${s.current_players}/${s.max_players} • 📞 ${s.contacts}</div>
+          </div>
+          <div style="display:flex; gap:8px;">
+            ${s.moderation_status !== 'approved' ? `<button class="btn-primary" style="padding:6px 12px; font-size:0.8rem;" onclick="moderateSession(${s.id}, 'approved')">Одобрить</button>` : ''}
+            ${s.moderation_status !== 'rejected' ? `<button class="btn-outline" style="padding:6px 12px; font-size:0.8rem; color:#f59e0b; border-color:#f59e0b;" onclick="moderateSession(${s.id}, 'rejected')">Отклонить</button>` : ''}
+            <button class="btn-outline" style="padding:6px 12px; font-size:0.8rem; color:#ef4444; border-color:#ef4444;" onclick="deleteSession(${s.id})">Удалить</button>
+          </div>
+        </div>`;
+      }).join('') : '<p style="color:var(--text-muted);">Партий пока нет.</p>';
+
+      const reqBox = document.getElementById('adminRequestsList');
+      reqBox.innerHTML = pendingReqs.length ? pendingReqs.map(r => {
+        const sess = sessions.find(s => s.id === r.session_id);
+        return `
+        <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px; background:var(--bg); padding:14px 18px; border-radius:12px; border:1px solid var(--border);">
+          <div>
+            <strong>Игрок: ${r.username}</strong> хочет вступить в партию <strong>«${sess ? sess.game_title : 'Игра'}»</strong>
+          </div>
+          <div style="display:flex; gap:8px;">
+            <button class="btn-primary" style="padding:6px 12px; font-size:0.8rem;" onclick="handleRequest(${r.id}, 'approved')">Принять</button>
+            <button class="btn-outline" style="padding:6px 12px; font-size:0.8rem; color:#ef4444; border-color:#ef4444;" onclick="handleRequest(${r.id}, 'rejected')">Отклонить</button>
+          </div>
+        </div>`;
+      }).join('') : '<p style="color:var(--text-muted);">Новых заявок на вступление нет.</p>';
+
+      const gamesBox = document.getElementById('adminGamesList');
+      gamesBox.innerHTML = games.map(g => `
+        <div style="display:flex; justify-content:space-between; align-items:center; background:var(--bg); padding:14px 18px; border-radius:12px; border:1px solid var(--border);">
+          <div>
+            <strong>${g.title}</strong>
+            <div style="font-size:0.85rem; color:var(--text-muted);">👥 ${g.min_players}-${g.max_players} чел. • 🎂 ${g.age}+ • ⏱ ${g.time} мин</div>
+          </div>
+          <button class="btn-outline" style="padding:6px 12px; font-size:0.8rem; color:#ef4444; border-color:#ef4444;" onclick="deleteGame(${g.id})">Удалить</button>
+        </div>
+      `).join('');
+    }
+
+    function moderateSession(id, status) {
+      const s = sessions.find(item => item.id === id);
+      if (s) {
+        s.moderation_status = status;
+        localStorage.setItem('bg_sessions', JSON.stringify(sessions));
+        showToast(status === 'approved' ? 'Партия одобрена!' : 'Партия отклонена');
+        renderAdmin();
+      }
+    }
+
+    function handleRequest(reqId, status) {
+      const req = requests.find(r => r.id === reqId);
+      if (!req) return;
+      req.status = status;
+      if (status === 'approved') {
+        const s = sessions.find(item => item.id === req.session_id);
+        if (s && s.current_players < s.max_players) s.current_players += 1;
+        localStorage.setItem('bg_sessions', JSON.stringify(sessions));
+      }
+      localStorage.setItem('bg_requests', JSON.stringify(requests));
+      showToast(status === 'approved' ? 'Заявка принята!' : 'Заявка отклонена');
+      renderAdmin();
+    }
+
+    function deleteGame(id) {
+      if (!confirm('Удалить игру?')) return;
+      games = games.filter(g => g.id !== id);
+      localStorage.setItem('bg_games', JSON.stringify(games));
+      showToast('Игра удалена');
+      renderAdmin();
+    }
+
+    function deleteSession(id) {
+      if (!confirm('Удалить партию?')) return;
+      sessions = sessions.filter(s => s.id !== id);
+      localStorage.setItem('bg_sessions', JSON.stringify(sessions));
+      showToast('Партия удалена');
+      renderAdmin();
+    }
+
+    document.getElementById('openAddModalBtn').addEventListener('click', () => document.getElementById('addModal').classList.add('open'));
+    document.getElementById('closeAddModalBtn').addEventListener('click', () => document.getElementById('addModal').classList.remove('open'));
+
+    document.getElementById('addGameForm').addEventListener('submit', (e) => {
+      e.preventDefault();
+      games.unshift({
+        id: Date.now(),
+        title: document.getElementById('gTitle').value,
+        min_players: parseInt(document.getElementById('gMinP').value),
+        max_players: parseInt(document.getElementById('gMaxP').value),
+        age: parseInt(document.getElementById('gAge').value),
+        time: parseInt(document.getElementById('gTime').value),
+        tags: document.getElementById('gTags').value || 'настолка',
+        description: document.getElementById('gDesc').value,
+        image_url: document.getElementById('gImg').value || ''
+      });
+      localStorage.setItem('bg_games', JSON.stringify(games));
+      document.getElementById('addModal').classList.remove('open');
+      e.target.reset();
+      showToast('Игра добавлена!');
+      renderAdmin();
+    });
+
+    document.getElementById('resetDemoBtn').addEventListener('click', async () => {
+      if (!confirm('Вернуть исходную базу?')) return;
+      localStorage.removeItem('bg_games');
+      localStorage.removeItem('bg_sessions');
+      localStorage.removeItem('bg_requests');
+      await initAdmin();
+      showToast('База сброшена!');
+    });
+
+    initAdmin();
+  </script>
+</body>
+</html>
